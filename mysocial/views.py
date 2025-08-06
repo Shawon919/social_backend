@@ -14,8 +14,8 @@ import string
 from django_celery_beat.models import CrontabSchedule,PeriodicTask
 import json
 from uuid import uuid4
-from .tasks import send_email,delete_otp
-
+from .tasks import send_email,delete_otp,otp_time_out
+from rest_framework.permissions import IsAuthenticated
 
 
 class Registration(APIView):
@@ -29,7 +29,8 @@ class Registration(APIView):
                 email = user.email
                 otp = ''.join(random.choices(string.digits, k=6))
                 OTP.objects.create(email=email, otp=otp)
-                delete_otp.apply_async(args=[email], countdown=20)
+                send_email(email,otp)
+                delete_otp.apply_async(args=[email], countdown=60)
 
                 return Response({
                     "message": f"User registered successfully. A verification code '{otp}' has been sent to your email. Please confirm within 1 hour.",
@@ -48,6 +49,7 @@ class Registration(APIView):
                 "message": "An unexpected error occurred.",
                 "error": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
 
 
 class otp_confirmation(APIView):
@@ -60,13 +62,16 @@ class otp_confirmation(APIView):
                  email = User.objects.get(email=email)
                  otp_email = OTP.objects.get(email=email)
                  if otp_email.otp == otp:
-                     otp_email.otp = ''
-                     otp_email.save()
                      email.is_active = True
                      email.save()
-                
+                     otp_email.delete()
+
+                     user = User.objects.get(email=email)
+                     token = RefreshToken.for_user(user)
+
+                    
                      return Response(
-                         {'message':'succefully verified'},
+                         {'message':'succefully verified','token':str(token.access_token)},
                          status=status.HTTP_200_OK)
                  else: return Response({'message':'otp is not matched'},status=status.HTTP_401_UNAUTHORIZED)
              return Response({'message':"email doesn't exist"},status=status.HTTP_404_NOT_FOUND)     
@@ -118,15 +123,18 @@ class forget_password(APIView):
         otp = ''.join(random.choice(random_numbers) for _ in range(6))
 
         try:
-            if OTP.objects.filter(email=email).exists():
-                email = OTP.objects.get(email=email)
-                email.otp = otp
-                email.save()
+            if User.objects.filter(email=email).exists():
+                otp_entry = OTP.objects.create(email=email,otp=otp)
+               
+                otp_time_out.apply_async(args=[email], countdown=60)
+                
+                
+
                 return Response({
                     'message' : "succesfully set the otp",
                     'status' : 'success',
-                    'serializer' : {'email':email.email,
-                                    'otp': email.otp
+                    'serializer' : {'email':otp_entry.email,
+                                    'otp': otp_entry.otp,
                                     }
                 },status=status.HTTP_201_CREATED)
             return Response({
@@ -138,3 +146,21 @@ class forget_password(APIView):
             return Response({
                 'errors' : str(e)
             },status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+
+class reset_password(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self,request):
+        new_password = request.data.get("new_password")
+        user = request.user
+
+        try:
+            if new_password == None:
+                return Response({'error':'please enter password'})
+            user.set_password(new_password)
+            user.save()
+            return Response({'message':'password is reseted','status':'success'},status=status.HTTP_200_OK)
+        except OTP.DoesNotExist:
+            return Response({'error':'OTP field is not existed'})
