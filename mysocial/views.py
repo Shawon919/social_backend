@@ -3,7 +3,7 @@ from rest_framework import status
 from rest_framework.views import APIView
 from .models import User
 from rest_framework.permissions import IsAdminUser,IsAuthenticated
-from .serializers import (UserRegistration,UserView)
+from .serializers import (UserRegistration,UserView,UserSerilizer)
 from rest_framework.response import Response
 from django.contrib.auth import authenticate
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -115,6 +115,7 @@ class get_user(APIView):
     
 
 
+
 class forget_password(APIView):
     def post(self,request):
         email = request.data.get('email')
@@ -150,6 +151,7 @@ class forget_password(APIView):
 
 
 
+
 class reset_password(APIView):
     permission_classes = [IsAuthenticated]
     def post(self,request):
@@ -164,3 +166,26 @@ class reset_password(APIView):
             return Response({'message':'password is reseted','status':'success'},status=status.HTTP_200_OK)
         except OTP.DoesNotExist:
             return Response({'error':'OTP field is not existed'})
+
+
+
+
+
+class update_user(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self,request):
+        id = request.user.id
+        try:
+            if User.objects.filter(id=id).exists():
+                user_details = User.objects.get(id=id)
+                serializer = UserSerilizer(user_details,data=request.data,partial=True)
+                if serializer.is_valid():
+                    serializer.save()
+                    return Response({'message':'updated successfully','status':'success'},
+                                    status=status.HTTP_201_CREATED)    
+                return Response({'message':'updated failed','status':'failed'},
+                                status=status.HTTP_400_BAD_REQUEST)  
+            return Response({'message':'user not found'},status=status.HTTP_404_NOT_FOUND)
+        except User.DoesNotExist:
+            return Response({'message':'something went wrong'},
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR)
